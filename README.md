@@ -5,6 +5,28 @@
 This project involves the generation of a high-fidelity synthetic financial dataset tailored to the Indian fintech ecosystem (INR currency, PAN card regulations, geospatial constraints) and the development of a robust anomaly detection pipeline. The system is designed to simulate realistic legitimate user behavior while injecting specific, detectable fraud vectors for model training.
 
 
+
+## 📂 Project Structure
+
+```
+├── app/
+│   ├── main.py          # FastAPI application entry point, endpoints, and startup logic
+│   ├── core.py          # AnomalyDetector class: Preprocessing, model loading, and prediction
+│   └── schemas.py       # Pydantic models for request/response validation
+├── model/
+|   ├── models.ipynb        # python notebook that trains one-class SVM, autoencoders and isolation forest
+│   ├── one_class_svm.pkl   # Pre-trained One-Class SVM model
+│   └── robust_scaler.pkl   # Pre-trained RobustScaler for feature normalization
+├── data/
+|   ├──generate_synthetic_dataset.ipynb  # python notebook to generate synthetic dataset
+│   └── transactions.csv    # Synthetic transaction dataset
+├── tests/
+│   └── test_api.py      # Unit tests for the API endpoints
+├── DECISION_LOG.md      # Record of key technical decisions and model selection rationale
+└── requirements.txt     # Python dependencies
+```
+
+
 ## Part 1: Synthetic Data Generation Specs
 
 The dataset is generated using a combination of **stochastic processes** and **agent-based simulation** to create the following behavioral patterns.
@@ -41,19 +63,16 @@ Legitimate prices (e.g., ₹1,243.50) follow natural digit distributions. Fraud 
 * **Rule:** Same `card_number` used at near-identical timestamps in locations separated by >10km.
 
 
-# Preprocessing Pipeline for Financial Anomaly Detection
+## PART2: Preprocessing Pipeline for Financial Anomaly Detection
 
 This document details the data preprocessing pipeline implemented in the project. The pipeline is designed to transform raw transaction data into a format suitable for unsupervised anomaly detection models (**Isolation Forest, One-Class SVM, and Autoencoders**).
 
-The preprocessing logic prioritizes **temporal integrity**, **geometric consistency**, and **outlier robustness**.
 
----
-
-## 🚀 Pipeline Overview
+##  Pipeline Overview
 
 The pipeline consists of 8 distinct phases, executed sequentially:
 
-1. **Temporal Sorting:** Enforcing chronological order to prevent data leakage.
+1. **Time based Sorting:** Enforcing chronological order to prevent data leakage.
 2. **Data Cleaning:** Removing invalid transactions and duplicates.
 3. **Feature Selection:** Dropping non-predictive identifiers.
 4. **Feature Engineering:** Transforming time and magnitude into learnable geometric features.
@@ -64,18 +83,11 @@ The pipeline consists of 8 distinct phases, executed sequentially:
 
 ---
 
-## 🛠 Detailed Steps
-
-### 1. Temporal Ordering
-
-**Objective:** Ensure the model learns from past events to predict future anomalies.
-
-* **Action:** The dataset is sorted by `timestamp` in ascending order.
-* **Code Reference:** `df.sort_values("timestamp")`
+### 1. Time based Ordering: 
+- The dataset is sorted by `timestamp` in ascending order. This step ensures the model learns from past events to predict future anomalies.
 
 ### 2. Data Cleaning & Validation
-
-**Objective:** Remove noise and impossible values that could destabilize the models.
+- Remove noise and impossible values that could destabilize the models.
 
 * **Constraints Enforced:**
 * `amount > 0` (Transaction value must be positive)
@@ -88,7 +100,7 @@ The pipeline consists of 8 distinct phases, executed sequentially:
 
 ### 3. Target Separation & Feature Selection
 
-**Objective:** Prevent label leakage and remove high-cardinality identifiers that act as noise.
+- Prevent label leakage and remove high-cardinality identifiers that act as noise.
 
 * **Target Extraction:** The `is_fraud` label is separated into variable `y` and removed from the feature set `X`.
 * **Dropped Columns:**
@@ -99,8 +111,7 @@ The pipeline consists of 8 distinct phases, executed sequentially:
 
 
 ### 4. Feature Engineering
-
-**Objective:** Convert raw features into a geometric space understandable by distance-based algorithms (SVM/Autoencoders).
+- Convert raw features into a geometric space understandable by distance-based algorithms (SVM/Autoencoders).
 
 #### A. Cyclical Time Encoding
 
@@ -124,15 +135,10 @@ Financial transaction amounts and distances often follow a "Power Law" distribut
 
 
 ### 5. Categorical Encoding
-
-**Objective:** Convert string categories into numeric format.
-
-* **Method:** **One-Hot Encoding** is applied to `merchant_category`.
-* **Implementation:** `pd.get_dummies(..., drop_first=True)` is used to avoid multicollinearity.
+- **One-Hot Encoding** is applied to `merchant_category`.
 
 ### 6. Train / Test Split (Time-Based)
-
-**Objective:** Simulate a real-world production environment where we train on historical data and predict on future data.
+Simulate a real-world production environment where we train on historical data and predict on future data.
 
 * **Method:** Strict **80/20 Time Split**.
 * **Training Set:** First 80% of rows (Historical).
@@ -141,22 +147,20 @@ Financial transaction amounts and distances often follow a "Power Law" distribut
 
 ### 7. Data Normalization
 
-**Objective:** Scale all features to a comparable range so that features with large values (like Amount) don't dominate the loss function.
+- Scale all features to a comparable range so that features with large values (like Amount) don't dominate the loss function.
 
-* **Scaler Used:** **RobustScaler**.
-* **Reasoning:** Unlike Standard or MinMax scalers, RobustScaler uses the Median and Interquartile Range (IQR). It is resistant to the extreme outliers often found in fraud datasets.
+- **Scaler Used:** **RobustScaler**. Unlike Standard or MinMax scalers, RobustScaler uses the Median and Interquartile Range (IQR). It is resistant to the extreme outliers often found in fraud datasets.
 
 ### 8. Unsupervised Training Setup
 
-**Objective:** Enable "Normality Learning" for Autoencoders and One-Class SVM.
+- Enable "Normality Learning" for Autoencoders and One-Class SVM.
 
-* **Action:** A specific training set `X_train_ae` is created by removing all fraud instances (`y_train == 1`) from the training data.
-* **Logic:** The models are trained **only on legitimate transactions** so they learn to reconstruct "normal" patterns. During testing, they flag anything they cannot reconstruct (fraud) as an anomaly.
+- A specific training set `X_train_ae` is created by removing all fraud instances (`y_train == 1`) from the training data. The models are trained **only on legitimate transactions** so they learn to reconstruct "normal" patterns. During testing, they flag anything they cannot reconstruct (fraud) as an anomaly.
 * *Note: Isolation Forest is trained on the full, contaminated training set.*
 
 ---
 
-## 📊 Final Feature Set
+## Final Feature Set
 
 The processed data fed into the models consists of:
 
