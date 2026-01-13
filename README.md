@@ -39,3 +39,203 @@ Legitimate prices (e.g., ₹1,243.50) follow natural digit distributions. Fraud 
 
 7. **Concurrent Session Usage**
 * **Rule:** Same `card_number` used at near-identical timestamps in locations separated by >10km.
+
+
+# Preprocessing Pipeline for Financial Anomaly Detection
+
+This document details the data preprocessing pipeline implemented in the project. The pipeline is designed to transform raw transaction data into a format suitable for unsupervised anomaly detection models (**Isolation Forest, One-Class SVM, and Autoencoders**).
+
+The preprocessing logic prioritizes **temporal integrity**, **geometric consistency**, and **outlier robustness**.
+
+---
+
+## 🚀 Pipeline Overview
+
+The pipeline consists of 8 distinct phases, executed sequentially:
+
+1. **Temporal Sorting:** Enforcing chronological order to prevent data leakage.
+2. **Data Cleaning:** Removing invalid transactions and duplicates.
+3. **Feature Selection:** Dropping non-predictive identifiers.
+4. **Feature Engineering:** Transforming time and magnitude into learnable geometric features.
+5. **Categorical Encoding:** Converting categories into numerical vectors.
+6. **Train/Test Splitting:** Performing a strict time-based split (Past vs. Future).
+7. **Normalization:** Scaling features using robust statistics.
+8. **Model-Specific Preparation:** Filtering training data for unsupervised learning.
+
+---
+
+## 🛠 Detailed Steps
+
+### 1. Temporal Ordering
+
+**Objective:** Ensure the model learns from past events to predict future anomalies.
+
+* **Action:** The dataset is sorted by `timestamp` in ascending order.
+* **Code Reference:** `df.sort_values("timestamp")`
+
+### 2. Data Cleaning & Validation
+
+**Objective:** Remove noise and impossible values that could destabilize the models.
+
+* **Constraints Enforced:**
+* `amount > 0` (Transaction value must be positive)
+* `hour` $\in [0, 23]$
+* `day_of_week` $\in [0, 6]$
+* `month` $\in [1, 12]$
+
+
+* **Deduplication:** Exact duplicate rows are removed to prevent density bias in clustering.
+
+### 3. Target Separation & Feature Selection
+
+**Objective:** Prevent label leakage and remove high-cardinality identifiers that act as noise.
+
+* **Target Extraction:** The `is_fraud` label is separated into variable `y` and removed from the feature set `X`.
+* **Dropped Columns:**
+* `transaction_id`, `card_number`, `customer_id`, `merchant_id` (Unique Identifiers)
+* `timestamp` (Replaced by engineered time features)
+* `fraud_type` (Label leakage)
+
+
+
+### 4. Feature Engineering
+
+**Objective:** Convert raw features into a geometric space understandable by distance-based algorithms (SVM/Autoencoders).
+
+#### A. Cyclical Time Encoding
+
+Time is circular (23:00 is close to 00:00), but raw numbers imply they are far apart. We map time features onto a unit circle using Sine and Cosine transformations.
+
+* **Transformations:**
+* `hour` $\rightarrow$ `hour_sin`, `hour_cos`
+* `day_of_week` $\rightarrow$ `day_sin`, `day_cos`
+* `month` $\rightarrow$ `month_sin`, `month_cos`
+
+
+
+#### B. Logarithmic Transformation
+
+Financial transaction amounts and distances often follow a "Power Law" distribution (heavy tails). We compress these distributions to make them closer to a Normal distribution, which stabilizes Gradient Descent.
+
+* **Transformations:**
+* `amount` $\rightarrow$ `amount_log` (using `np.log1p`)
+* `distance_from_home` $\rightarrow$ `distance_log` (using `np.log1p`)
+
+
+
+### 5. Categorical Encoding
+
+**Objective:** Convert string categories into numeric format.
+
+* **Method:** **One-Hot Encoding** is applied to `merchant_category`.
+* **Implementation:** `pd.get_dummies(..., drop_first=True)` is used to avoid multicollinearity.
+
+### 6. Train / Test Split (Time-Based)
+
+**Objective:** Simulate a real-world production environment where we train on historical data and predict on future data.
+
+* **Method:** Strict **80/20 Time Split**.
+* **Training Set:** First 80% of rows (Historical).
+* **Testing Set:** Last 20% of rows (Future).
+* *Note: Random shuffling is explicitly disabled to prevent "future leakage".*
+
+### 7. Data Normalization
+
+**Objective:** Scale all features to a comparable range so that features with large values (like Amount) don't dominate the loss function.
+
+* **Scaler Used:** **RobustScaler**.
+* **Reasoning:** Unlike Standard or MinMax scalers, RobustScaler uses the Median and Interquartile Range (IQR). It is resistant to the extreme outliers often found in fraud datasets.
+
+### 8. Unsupervised Training Setup
+
+**Objective:** Enable "Normality Learning" for Autoencoders and One-Class SVM.
+
+* **Action:** A specific training set `X_train_ae` is created by removing all fraud instances (`y_train == 1`) from the training data.
+* **Logic:** The models are trained **only on legitimate transactions** so they learn to reconstruct "normal" patterns. During testing, they flag anything they cannot reconstruct (fraud) as an anomaly.
+* *Note: Isolation Forest is trained on the full, contaminated training set.*
+
+---
+
+## 📊 Final Feature Set
+
+The processed data fed into the models consists of:
+
+* `merchant_lat`, `merchant_long` (Geospatial)
+* `amount_log`, `distance_log` (Log-transformed Magnitude)
+* `hour_sin`, `hour_cos`, `day_sin`, `day_cos`, `month_sin`, `month_cos` (Cyclical Time)
+* `merchant_category_*` (One-Hot Encoded Categories)
+
+## PART 3: Anomaly Detection API
+
+This project includes a production-ready FastAPI application to serve the One-Class SVM model.
+
+### ⚙️ Setup & Running
+
+1. **Install Dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Start the API Server**
+   ```bash
+   uvicorn app.main:app --reload
+   ```
+   The API will be available at `http://127.0.0.1:8000`.
+
+### 📡 API Endpoints
+
+#### `POST /predict`
+
+Detects if a transaction is anomalous (fraudulent).
+
+**Request Body** (JSON):
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `amount` | float | Transaction amount (must be > 0) |
+| `merchant_category` | string | Category: `electronics`, `gas`, `grocery`, `jewelry`, `luxury_goods`, `restaurant`, `retail` |
+| `distance_from_home` | float | Distance from user home in km |
+| `timestamp` | string (ISO 8601) | Transaction timestamp (e.g., `2025-09-15T14:30:00Z`) |
+
+**Example Request**:
+```json
+{
+  "amount": 5000.0,
+  "merchant_category": "electronics",
+  "distance_from_home": 12.5,
+  "timestamp": "2025-09-15T14:30:00Z"
+}
+```
+
+**Success Response (200 OK)**:
+```json
+{
+  "is_fraud": false,
+  "anomaly_score": 0.1234,
+  "method": "OneClassSVM",
+  "reasoning": "Transaction fits normal patterns."
+}
+```
+
+**Error Response**:
+- **422 Validation Error**: If fields are missing or invalid (e.g., negative amount).
+- **500 Internal Server Error**: If model prediction fails.
+
+#### `GET /health`
+
+Checks if the API and model are loaded correctly.
+
+**Response**:
+```json
+{
+  "status": "healthy"
+}
+```
+
+### 🧪 Running Tests
+
+Unit tests are included to verify API functionality.
+
+```bash
+pytest tests/
+```
