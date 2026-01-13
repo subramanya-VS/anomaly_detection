@@ -1,12 +1,12 @@
 # Anomaly Detection with API 
 
-## 📌 Project Overview
+##  Project Overview
 
 This project involves the generation of a high-fidelity synthetic financial dataset tailored to the Indian fintech ecosystem (INR currency, PAN card regulations, geospatial constraints) and the development of a robust anomaly detection pipeline. The system is designed to simulate realistic legitimate user behavior while injecting specific, detectable fraud vectors for model training.
 
 
 
-## 📂 Project Structure
+##  Project Structure
 
 ```
 ├── app/
@@ -236,7 +236,7 @@ Checks if the API and model are loaded correctly.
 }
 ```
 
-### 🧪 Running Tests
+###  Running Tests
 
 Unit tests are included to verify API functionality.
 
